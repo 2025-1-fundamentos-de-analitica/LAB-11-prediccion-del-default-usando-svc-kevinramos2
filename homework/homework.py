@@ -171,26 +171,22 @@ def crear_pipeline():
 # Paso 3:  Optimización de hiperparámetros
 # ==========================================
 def optimizar_hyperparametros(pipeline, x_train, y_train, cv_splits, metric):
-    """
-    Ajusta el pipeline buscando los mejores hiperparámetros con validación cruzada.
-    """
     grid = GridSearchCV(
         pipeline,
         param_grid={
-            'pca__n_components': [20, 21],
+            'pca__n_components': [20],  # solo 1 valor para no explorar nada
             'seleccion__k': [12],
             'clasificador__kernel': ['rbf'],
             'clasificador__gamma': [0.099]
         },
-        cv=cv_splits,
+        cv=3,   # en vez de 10
         scoring=metric,
         refit=True,
-        verbose=0
+        verbose=2
     )
 
     grid.fit(x_train, y_train)
     return grid
-
 
 # ============================
 # Paso 4:  Calcular métricas 
@@ -234,8 +230,8 @@ def guardar_comprimido(modelo, path):
     """
     Guarda el modelo serializado y comprimido.
     """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with gzip.open(path, 'wb') as f:
+    os.makedirs("files/models", exist_ok=True)
+    with gzip.open('files/models/model.pkl.gz', 'wb') as f:
         pickle.dump(modelo, f)
 
 
@@ -246,11 +242,10 @@ def guardar_jsonl(registros, path):
     """
     Guarda una lista de diccionarios como JSONL.
     """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        for r in registros:
-            f.write(json.dumps(r) + '\n')
-
+    os.makedirs("files/output", exist_ok=True)
+    with open("files/output/metrics.json", "w") as f:
+        for item in registros:
+            f.write(json.dumps(item) + '\n')
         
 
 # ============================
@@ -259,39 +254,39 @@ def guardar_jsonl(registros, path):
 
 if __name__ == "__main__":
         
-    # Cargar datasets desde ZIP
-    with zipfile.ZipFile('files/input/test_data.csv.zip', 'r') as z:
-        with z.open('test_default_of_credit_card_clients.csv') as f:
-            test_df = pd.read_csv(f)
+    try:
+        print("Cargando datos...")
+        test_df = pd.read_csv("files/input/test_data.csv.zip")
+        train_df = pd.read_csv("files/input/train_data.csv.zip")
+ 
+        print("Datos cargados. Limpiando...")
+        train_df = preparar_datos(train_df)
+        test_df = preparar_datos(test_df)
 
-    with zipfile.ZipFile('files/input/train_data.csv.zip', 'r') as z:
-        with z.open('train_default_of_credit_card_clients.csv') as f:
-            train_df = pd.read_csv(f)
+        X_train, y_train = train_df.drop(columns='default'), train_df['default']
+        X_test, y_test = test_df.drop(columns='default'), test_df['default']
 
-    # Limpiar datasets
-    train_df = preparar_datos(train_df)
-    test_df = preparar_datos(test_df)
+        print("Datos preparados. Creando pipeline...")
+        pipeline = crear_pipeline()
 
-    # Separar características y objetivo
-    X_train, y_train = train_df.drop(columns='default'), train_df['default']
-    X_test, y_test = test_df.drop(columns='default'), test_df['default']
+        print("Ajustando modelo...")
+        modelo_ajustado = optimizar_hyperparametros(pipeline, X_train, y_train, 10, 'balanced_accuracy')
 
-    # Crear pipeline
-    pipeline = crear_pipeline()
+        print("Guardando modelo...")
+        guardar_comprimido(modelo_ajustado, 'files/models/model.pkl.gz')
 
-    # Ajustar con validación cruzada
-    modelo_ajustado = optimizar_hyperparametros(pipeline, X_train, y_train, 10, 'balanced_accuracy')
+        metricas_train = calcular_metricas(modelo_ajustado, X_train, y_train, 'train')
+        metricas_test = calcular_metricas(modelo_ajustado, X_test, y_test, 'test')
 
-    # Guardar modelo
-    guardar_comprimido(modelo_ajustado, 'files/models/model.pkl.gz')
+        cm_train = calcular_matriz_confusion(modelo_ajustado, X_train, y_train, 'train')
+        cm_test = calcular_matriz_confusion(modelo_ajustado, X_test, y_test, 'test')
 
-    # Calcular métricas
-    metricas_train = calcular_metricas(modelo_ajustado, X_train, y_train, 'train')
-    metricas_test = calcular_metricas(modelo_ajustado, X_test, y_test, 'test')
+        print("Guardando métricas...")
+        guardar_jsonl([metricas_train, metricas_test, cm_train, cm_test], 'files/output/metrics.json')
 
-    # Calcular matrices de confusión
-    cm_train = calcular_matriz_confusion(modelo_ajustado, X_train, y_train, 'train')
-    cm_test = calcular_matriz_confusion(modelo_ajustado, X_test, y_test, 'test')
+        print("Proceso completado.")
 
-    # Guardar métricas y matrices
-    guardar_jsonl([metricas_train, metricas_test, cm_train, cm_test], 'files/output/metrics.json')
+    except Exception as e:
+        print("💥 Ocurrió un error:")
+        import traceback
+        traceback.print_exc()
